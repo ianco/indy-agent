@@ -12,7 +12,7 @@ Requirements
 
 Quickstart
 ----------
-There are two ways to run the agent (tested on Ubuntu 16.04).  
+There are three ways to run the agent (tested on Ubuntu 16.04).  
 
 Change your current folder to `indy-agent/python`  
 
@@ -27,7 +27,10 @@ Change your current folder to `indy-agent/python`
     * Do `$ sudo iptables -L` and find `Chain DOCKER` table. Info you need is stored at the `destination` column. (in my case I had 172.17.0.2 and 172.17.0.3)
     * Open up your browser, with two tabs opened: 172.17.0.2:8094 (agent A) and 172.17.0.3:8095 (agent B).
 
-2. **Using dev mode**
+2. **Using docker-compose and manage script**
+    * See instructions in [docker-compose-manage.md](docker-compose-manage.md).
+
+3. **Using dev mode**
     
     * Make sure you have Python virtual environment installed and running.
     * Install requirements: `$ pip install -r requirements.txt`
