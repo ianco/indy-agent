@@ -44,10 +44,12 @@ case "$1" in
       docker-compose stop
     ;;
   build)
-      docker-compose build
+      docker build -t indy-node -f pool.dockerfile .
+      docker build -t py-agent -f agent.dockerfile .
     ;;
   rebuild)
-      docker-compose build --no-cache
+      docker build --no-cache -t indy-node -f pool.dockerfile .
+      docker build --no-cache -t py-agent -f agent.dockerfile .
     ;;
   rm)
       docker-compose down -v --rm all
