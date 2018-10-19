@@ -16,29 +16,32 @@ usage () {
 
   start - Starts the 4 indy-node containers and a webserver to allow browsing the ledger.
 
-  cli - Start client container in the indy-cli
+  rm - Reset the environment by removing the project containers and associated volumes.
 
-  bash - Start client container in a bash shell in /home/indy. The python folder is in /home/indy.
+  logs - Display the logs from the docker compose run (ctrl-c to exit).
+
+  bash - Start client container in a bash shell in /home/indy.
+
+  cli - Start indy-cli in the agent container.
 
   stop - Stops the services.  This is a non-destructive process.  The containers
          are not deleted so they will be reused the next time you run start.
 
   rebuild - Force a full rebuild of the docker images (no cache)
-
-  rm - Remove project containers and associated volumes.
 EOF
 exit 1
 }
 
 case "$1" in
   start)
-      docker-compose up webserver node1 node2 node3 node4 agent1 agent2
+      docker-compose up -d
+      docker-compose logs -f
     ;;
   cli)
-      docker exec -it -e MODE=cli python_agent2_1 scripts/start_client.sh
+      docker exec -it -e MODE=cli python_agent2_1 indy-cli
     ;;
   bash)
-      docker exec -it -e MODE=bash python_agent2_1 scripts/start_client.sh
+       docker exec -it -e MODE=cli python_agent2_1 bash
     ;;
   stop)
       docker-compose stop
@@ -51,8 +54,11 @@ case "$1" in
       docker build --no-cache -t indy-node -f pool.dockerfile .
       docker build --no-cache -t py-agent -f agent.dockerfile .
     ;;
+  logs)
+    docker-compose logs -f
+    ;;
   rm)
-      docker-compose down -v --rm all
+      docker-compose down -v
     ;;
   *)
       usage;;
