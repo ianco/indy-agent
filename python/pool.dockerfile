@@ -2,7 +2,8 @@ FROM bcgovimages/von-image:py35-1.6-8
 
 USER indy
 
-RUN pip install --no-cache-dir aiosqlite~=0.6.0
+RUN pip install --no-cache-dir aiosqlite~=0.6.0 \
+  "git+https://github.com/Supervisor/supervisor.git"
 
 ENV RUST_LOG ${RUST_LOG:-warning}
 
