@@ -3,33 +3,46 @@
 
     const MESSAGE_TYPES = {
         CONN_BASE: "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/connections/1.0/",
-        CONN_UI_BASE: "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/connections_ui/1.0/",
-        UI_BASE: "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/ui/1.0/"
+        ADMIN_CONNECTIONS_BASE: "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/admin_connections/1.0/",
+        ADMIN_BASE: "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/admin/1.0/",
+        ADMIN_WALLETCONNECTION_BASE: "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/admin_walletconnection/1.0/",
+        ADMIN_BASICMESSAGE_BASE: "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/admin_basicmessage/1.0/"
     };
 
-    const UI_MESSAGE = {
-        STATE: MESSAGE_TYPES.UI_BASE + "state",
-        STATE_REQUEST: MESSAGE_TYPES.UI_BASE + "state_request",
-        INITIALIZE: MESSAGE_TYPES.UI_BASE + "initialize",
-
+    const ADMIN = {
+        STATE: MESSAGE_TYPES.ADMIN_BASE + "state",
+        STATE_REQUEST: MESSAGE_TYPES.ADMIN_BASE + "state_request"
     };
 
-    const CONN_UI_MESSAGE = {
-        SEND_INVITE: MESSAGE_TYPES.CONN_UI_BASE + "send_invite",
-        INVITE_SENT: MESSAGE_TYPES.CONN_UI_BASE + "invite_sent",
-        INVITE_RECEIVED: MESSAGE_TYPES.CONN_UI_BASE + "invite_received",
+    const ADMIN_WALLETCONNECTION = {
+        CONNECT: MESSAGE_TYPES.ADMIN_WALLETCONNECTION_BASE + 'connect',
+        DISCONNECT: MESSAGE_TYPES.ADMIN_WALLETCONNECTION_BASE + 'disconnect',
+        USER_ERROR: MESSAGE_TYPES.ADMIN_WALLETCONNECTION_BASE + 'user_error'
+    };
 
-        SEND_REQUEST: MESSAGE_TYPES.CONN_UI_BASE + "send_request",
-        REQUEST_SENT: MESSAGE_TYPES.CONN_UI_BASE + "request_sent",
-        REQUEST_RECEIVED:MESSAGE_TYPES.CONN_UI_BASE + "request_received",
+    const ADMIN_CONNECTION = {
+        CONNECTION_LIST: MESSAGE_TYPES.ADMIN_CONNECTIONS_BASE + "connection_list",
+        CONNECTION_LIST_REQUEST: MESSAGE_TYPES.ADMIN_CONNECTIONS_BASE + "connection_list_request",
 
-        SEND_RESPONSE: MESSAGE_TYPES.CONN_UI_BASE + "send_response",
-        RESPONSE_SENT: MESSAGE_TYPES.CONN_UI_BASE + "response_sent",
-        RESPONSE_RECEIVED: MESSAGE_TYPES.CONN_UI_BASE + "response_received",
+        SEND_INVITE: MESSAGE_TYPES.ADMIN_CONNECTIONS_BASE + "send_invite",
+        INVITE_SENT: MESSAGE_TYPES.ADMIN_CONNECTIONS_BASE + "invite_sent",
+        INVITE_RECEIVED: MESSAGE_TYPES.ADMIN_CONNECTIONS_BASE + "invite_received",
 
-        SEND_MESSAGE: MESSAGE_TYPES.CONN_UI_BASE + "send_message",
-        MESSAGE_SENT: MESSAGE_TYPES.CONN_UI_BASE + "message_sent",
-        MESSAGE_RECEIVED: MESSAGE_TYPES.CONN_UI_BASE + "message_received"
+        SEND_REQUEST: MESSAGE_TYPES.ADMIN_CONNECTIONS_BASE + "send_request",
+        REQUEST_SENT: MESSAGE_TYPES.ADMIN_CONNECTIONS_BASE + "request_sent",
+        REQUEST_RECEIVED:MESSAGE_TYPES.ADMIN_CONNECTIONS_BASE + "request_received",
+
+        SEND_RESPONSE: MESSAGE_TYPES.ADMIN_CONNECTIONS_BASE + "send_response",
+        RESPONSE_SENT: MESSAGE_TYPES.ADMIN_CONNECTIONS_BASE + "response_sent",
+        RESPONSE_RECEIVED: MESSAGE_TYPES.ADMIN_CONNECTIONS_BASE + "response_received"
+    };
+
+    const ADMIN_BASICMESSAGE = {
+        SEND_MESSAGE: MESSAGE_TYPES.ADMIN_BASICMESSAGE_BASE + "send_message",
+        MESSAGE_SENT: MESSAGE_TYPES.ADMIN_BASICMESSAGE_BASE + "message_sent",
+        MESSAGE_RECEIVED: MESSAGE_TYPES.ADMIN_BASICMESSAGE_BASE + "message_received",
+        GET_MESSAGES: MESSAGE_TYPES.ADMIN_BASICMESSAGE_BASE + "get_messages",
+        MESSAGES: MESSAGE_TYPES.ADMIN_BASICMESSAGE_BASE + "messages"
     };
 
     // Message Router {{{
@@ -37,8 +50,8 @@
         routes: [],
         route:
             function(msg) {
-                if (msg.type in this.routes) {
-                    this.routes[msg.type](msg);
+                if (msg['@type'] in this.routes) {
+                    this.routes[msg['@type']](msg);
                 } else {
                     console.log('Message from server without registered route: ' + JSON.stringify(msg));
                 }
@@ -50,8 +63,33 @@
     };
     // }}}
 
+    // Limitation: this thread router only allows one cb per thread.
+    var thread_router = {
+        default_thread_expiration: 1000 * 60 * 5, // in milliseconds
+        thread_handlers: {},
+        route: function(msg){
+            if(!("thread" in msg)){
+                return; //no thread, no callbacks possible
+            }
+            thid = msg["thread"]["thid"];
+            if(thid in this.thread_handlers){
+                this.thread_handlers[thid]["handler"](msg);
+            }
+        },
+        register: function(thread_id, thread_cb){
+            this.thread_handlers[thread_id] = {
+                "handler": thread_cb,
+                "expires": (new Date()).getTime() + this.default_thread_expiration
+            };
+        },
+        clean_routes: function(){
+            // TODO: look through handlers and clean out expired ones.
+        }
+    };
+
     // this is shared data among all the vue instances for simplicity.
     var ui_data = {
+        wallet_connect_error: '',
         agent_name: '',
         passphrase: '',
         current_tab: 'login',
@@ -60,6 +98,10 @@
             endpoint: ""
         },
         connections: [],
+        pairwise_connections:[],
+        connection: {},
+        new_basicmessage: "",
+        basicmessage_list: [],
         history_view: []
     };
 
@@ -68,7 +110,7 @@
         data: ui_data,
         computed: {
             tab_active: function(){
-                return this.current_tab == "credentials";
+                return this.current_tab === "credentials";
             }
         }
     });
@@ -78,20 +120,17 @@
         data: ui_data,
         computed: {
             tab_active: function(){
-                return this.current_tab == "relationships";
+                return this.current_tab === "relationships";
             }
         },
         methods: {
             send_invite: function () {
                 msg = {
-                    type: CONN_UI_MESSAGE.SEND_INVITE,
-                    id: TOKEN,
-                    content: {
-                        name: this.new_connection_offer.name,
-                        endpoint: this.new_connection_offer.endpoint
-                    }
+                    '@type': ADMIN_CONNECTION.SEND_INVITE,
+                    name: this.new_connection_offer.name,
+                    endpoint: this.new_connection_offer.endpoint
                 };
-                socket.send(JSON.stringify(msg));
+                sendMessage(msg);
             },
             invite_sent: function (msg) {
                 this.connections.push({
@@ -103,23 +142,25 @@
             invite_received: function (msg) {
                 this.connections.push({
                     name: msg.content.name,
-                    invitation_msg: msg.content,
+                    invitation: {
+                        key: msg.content.connection_key,
+                        endpoint: msg.content.endpoint
+                    },
                     status: "Invite Received",
                     history: [history_format(msg.content.history)]
                 });
             },
 
-            send_request: function (invitation_msg) {
+            send_request: function (c) {
                 msg = {
-                    type: CONN_UI_MESSAGE.SEND_REQUEST,
-                    id: TOKEN,
+                    '@type': ADMIN_CONNECTION.SEND_REQUEST,
                     content: {
-                            name: invitation_msg.name,
-                            endpoint: invitation_msg.endpoint.url,
-                            key: invitation_msg.connection_key,
+                            name: c.name,
+                            endpoint: c.invitation.endpoint.url,
+                            key: c.invitation.key
                     }
                 };
-                socket.send(JSON.stringify(msg));
+                sendMessage(msg);
             },
             request_sent: function (msg) {
                 var c = this.get_connection_by_name(msg.content.name);
@@ -130,12 +171,12 @@
                 c.status = "Request Received";
                 c.connecton_request = msg.content;
                 c.history.push(history_format(msg.content.history));
-
+                // now request a state update to see the new pairwise connection
+                sendMessage({'@type': ADMIN.STATE_REQUEST});
             },
             send_response: function (prevMsg) {
                 msg = {
-                    type: CONN_UI_MESSAGE.SEND_RESPONSE,
-                    id: TOKEN,
+                    '@type': ADMIN_CONNECTION.SEND_RESPONSE,
                     content: {
                             name: prevMsg.name,
                             // endpoint_key: prevMsg.endpoint_key,
@@ -143,13 +184,15 @@
                             endpoint_did: prevMsg.endpoint_did
                     }
                 };
-                socket.send(JSON.stringify(msg));
+                sendMessage(msg);
             },
             response_sent: function (msg) {
                 var c = this.get_connection_by_name(msg.content.name);
                 c.status = "Response sent";
                 c.message_capable = true;
                 c.history.push(history_format(msg.content));
+                // remove from pending connections list
+                this.connections.splice(this.connections.indexOf(c), 1);
 
             },
             response_received: function (msg) {
@@ -159,31 +202,40 @@
                 c.their_did = msg.content.their_did;
                 c.message_capable = true;
                 c.history.push(history_format(msg.content.history));
-                //             displayConnection(msg.content.name, [['Send Message', connections.send_message, socket, msg]], 'Response received');
 
-            },
-            send_message: function (c) {
-                msg = {
-                    type: CONN_UI_MESSAGE.SEND_MESSAGE,
-                    id: TOKEN,
-                    content: {
-                            name: c.name,
-                            message: 'Hello, world!',
-                            their_did: c.their_did
-                    }
-                };
-                socket.send(JSON.stringify(msg));
+                // remove from pending connections list
+                this.connections.splice(this.connections.indexOf(c), 1);
+
+                // now request a state update to see the new pairwise connection
+                sendMessage({'@type': ADMIN.STATE_REQUEST});
             },
             message_sent: function (msg) {
-                var c = this.get_connection_by_name(msg.content.name);
-                c.status = "Message sent";
+                //var c = this.get_connection_by_name(msg.content.name);
+                //c.status = "Message sent";
+                // msg.with has their_did to help match.
+                if(msg.with == this.connection.their_did){
+                    //connection view currently open
+                    sendMessage({
+                        '@type': ADMIN_BASICMESSAGE.GET_MESSAGES,
+                        with: msg.with
+                    });
+                } else {
+                    //connection not currently open. set unread flag on connection details?
+                }
             },
-
             message_received: function (msg) {
-                var c = this.get_connection_by_name(msg.content.name);
-                c.status = "Message received";
-                c.their_did = msg.content.their_did;
-                c.history.push(history_format(msg.content.history));
+                if(msg.with == this.connection.their_did){
+                    //connection view currently open
+                    sendMessage({
+                        '@type': ADMIN_BASICMESSAGE.GET_MESSAGES,
+                        with: msg.with
+                    });
+                } else {
+                    //connection not currently open. set unread flag on connection details?
+                }
+            },
+            messages: function(msg){
+                this.basicmessage_list = msg.messages;
             },
             display_history: function(connection){
                 this.history_view = connection.history;
@@ -192,14 +244,60 @@
             },
             get_connection_by_name: function(name){
                return this.connections.find(function(x){return x.name === msg.content.name;});
+            },
+            show_connection: function(c){
+                this.connection = c;
+                ui_connection.load();
+                this.current_tab = "connection";
             }
         }
+    });
 
+    // Single Connection
+    var ui_connection = new Vue({
+        el: "#connection",
+        data: ui_data,
+        computed: {
+            tab_active: function(){
+                return this.current_tab === "connection";
+            }
+        },
+        methods: {
+            send_message: function(){
+                msg = {
+                    '@type': ADMIN_BASICMESSAGE.SEND_MESSAGE,
+                    to: this.connection.their_did,
+                    message: this.new_basicmessage
+                };
+                sendMessage(msg);
+                this.new_basicmessage = "";
+            },
+            load: function(){
+                sendMessage({
+                    '@type': ADMIN_BASICMESSAGE.GET_MESSAGES,
+                    with: this.connection.their_did
+                });
+            }
+        }
+    });
 
+    var ui_title = new Vue({
+        el: 'title',
+        data: ui_data,
+    });
 
+    var ui_header = new Vue({
+        el: '#header',
+        data: ui_data,
+        computed:{
 
+        },
+        methods: {
+            set_tab: function(t){
+                this.current_tab = t;
 
-
+            }
+        }
     });
 
     // UI Agent {{{
@@ -208,29 +306,32 @@
         data: ui_data,
         computed: {
             tab_active: function(){
-                return this.current_tab == "login";
+                return this.current_tab === "login";
             }
         },
         methods: {
-            initialize: function () {
-                init_message = {
-                    type: UI_MESSAGE.INITIALIZE,
-                    id: TOKEN,
-                    content: {
-                        name: this.agent_name,
-                        passphrase: this.passphrase
+            walletconnnect: function () {
+                this.wallet_connect_error = ""; // clear any previous error
+                //var v_this = this;
+                sendMessage({
+                    '@type': ADMIN_WALLETCONNECTION.CONNECT,
+                    name: this.agent_name,
+                    passphrase: this.passphrase
+                }, function(msg){
+                    //thread callback
+                    console.log("received thread response", msg);
+                    if(msg['@type'] === ADMIN_WALLETCONNECTION.USER_ERROR){
+                        this.wallet_connect_error = msg.message;
                     }
-                };
-                socket.send(JSON.stringify(init_message));
+                }.bind(this));
             },
             connect: function(){
-                socket.send(JSON.stringify(
+                sendMessage(
                     {
-                        type: UI_MESSAGE.STATE_REQUEST,
-                        id: TOKEN,
+                        '@type': ADMIN.STATE_REQUEST,
                         content: null
                     }
-                ));
+                );
             },
             update: function (msg) {
                 state = msg.content;
@@ -239,6 +340,23 @@
                 } else {
                     this.agent_name = state.agent_name;
                     this.current_tab = 'relationships';
+                    //load invitations
+
+                    console.log('invitations', state.invitations);
+                    state.invitations.forEach((i) => {
+                        this.connections.push({
+                            id: i.id,
+                            name: i.name,
+                            invitation: {
+                                key: i.connection_key,
+                                endpoint: i.endpoint
+                            },
+                            status: "Invite Received",
+                            history: []
+                        });
+                    });
+                    //load connections
+                    this.pairwise_connections = state['pairwise_connections'];
                 }
             }
         }
@@ -248,15 +366,16 @@
     // }}}
 
     // Message Routes {{{
-    msg_router.register(UI_MESSAGE.STATE, ui_agent.update);
-    msg_router.register(CONN_UI_MESSAGE.INVITE_SENT, ui_relationships.invite_sent);
-    msg_router.register(CONN_UI_MESSAGE.INVITE_RECEIVED, ui_relationships.invite_received);
-    msg_router.register(CONN_UI_MESSAGE.REQUEST_SENT, ui_relationships.request_sent);
-    msg_router.register(CONN_UI_MESSAGE.RESPONSE_SENT, ui_relationships.response_sent);
-    msg_router.register(CONN_UI_MESSAGE.MESSAGE_SENT, ui_relationships.message_sent);
-    msg_router.register(CONN_UI_MESSAGE.RESPONSE_RECEIVED, ui_relationships.response_received);
-    msg_router.register(CONN_UI_MESSAGE.REQUEST_RECEIVED, ui_relationships.request_received);
-    msg_router.register(CONN_UI_MESSAGE.MESSAGE_RECEIVED, ui_relationships.message_received);
+    msg_router.register(ADMIN.STATE, ui_agent.update);
+    msg_router.register(ADMIN_CONNECTION.INVITE_SENT, ui_relationships.invite_sent);
+    msg_router.register(ADMIN_CONNECTION.INVITE_RECEIVED, ui_relationships.invite_received);
+    msg_router.register(ADMIN_CONNECTION.REQUEST_SENT, ui_relationships.request_sent);
+    msg_router.register(ADMIN_CONNECTION.RESPONSE_SENT, ui_relationships.response_sent);
+    msg_router.register(ADMIN_BASICMESSAGE.MESSAGE_SENT, ui_relationships.message_sent);
+    msg_router.register(ADMIN_CONNECTION.RESPONSE_RECEIVED, ui_relationships.response_received);
+    msg_router.register(ADMIN_CONNECTION.REQUEST_RECEIVED, ui_relationships.request_received);
+    msg_router.register(ADMIN_BASICMESSAGE.MESSAGE_RECEIVED, ui_relationships.message_received);
+    msg_router.register(ADMIN_BASICMESSAGE.MESSAGES, ui_relationships.messages);
 
     // }}}
 
@@ -273,4 +392,20 @@
         console.log('Routing: ' + event.data);
         msg = JSON.parse(event.data);
         msg_router.route(msg);
+        thread_router.route(msg);
     });
+
+    function sendMessage(msg, thread_cb){
+        //decorate message as necessary
+        msg.ui_token = TOKEN; // deprecated
+        msg.id = (new Date()).getTime(); // ms since epoch
+
+        // register thread callback
+        if(typeof thread_cb !== "undefined") {
+            thread_router.register(msg.id, thread_cb);
+        }
+
+        // TODO: Encode properly when wire protocol is finished
+        console.log("sending message", msg);
+        socket.send(JSON.stringify(msg));
+    }
