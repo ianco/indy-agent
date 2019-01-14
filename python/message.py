@@ -1,6 +1,7 @@
 """ Module defining the Message class that is used as base structure for all
     received messages.
 """
+import json
 from collections import UserDict
 
 
@@ -17,6 +18,7 @@ class Message(UserDict):
 
         """
         UserDict.__init__(self,*args, **kwargs)
+        self.context = {}
 
 
     def to_dict(self):
@@ -25,3 +27,12 @@ class Message(UserDict):
     @property
     def type(self):
         return self.data["@type"]
+
+    def as_json(self):
+        class MessageEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, Message):
+                    return obj.to_dict()
+                return json.JSONEncoder.default(self, obj)
+
+        return json.dumps(self, cls=MessageEncoder)
